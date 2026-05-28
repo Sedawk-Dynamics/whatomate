@@ -232,6 +232,43 @@ func TestApp_GetWSToken_MissingOrgID(t *testing.T) {
 	testutil.AssertErrorResponse(t, req, fasthttp.StatusUnauthorized, "Unauthorized")
 }
 
+func TestApp_GetWSToken_UsesXOrganizationIDOverride(t *testing.T) {
+	app := newTestApp(t)
+	homeOrg := testutil.CreateTestOrganization(t, app.DB)
+	targetOrg := testutil.CreateTestOrganization(t, app.DB)
+	user := testutil.CreateTestUser(t, app.DB, homeOrg.ID)
+
+	// Membership in target org (same as org switcher / X-Organization-ID header).
+	otherOrg := &models.UserOrganization{
+		BaseModel:      models.BaseModel{ID: uuid.New()},
+		UserID:         user.ID,
+		OrganizationID: targetOrg.ID,
+		RoleID:         user.RoleID,
+	}
+	require.NoError(t, app.DB.Create(otherOrg).Error)
+
+	req := testutil.NewGETRequest(t)
+	testutil.SetAuthContext(req, homeOrg.ID, user.ID)
+	testutil.SetHeader(req, "X-Organization-ID", targetOrg.ID.String())
+
+	require.NoError(t, app.GetWSToken(req))
+	assert.Equal(t, fasthttp.StatusOK, testutil.GetResponseStatusCode(req))
+
+	var resp struct {
+		Data struct {
+			Token string `json:"token"`
+		} `json:"data"`
+	}
+	require.NoError(t, json.Unmarshal(testutil.GetResponseBody(req), &resp))
+
+	parsed, err := jwt.ParseWithClaims(resp.Data.Token, &middleware.JWTClaims{}, func(token *jwt.Token) (any, error) {
+		return []byte(testutil.TestJWTSecret), nil
+	})
+	require.NoError(t, err)
+	claims := parsed.Claims.(*middleware.JWTClaims)
+	assert.Equal(t, targetOrg.ID, claims.OrganizationID, "WS token org must match X-Organization-ID, not JWT home org")
+}
+
 // --- RefreshToken rotation (JTI single-use) ---
 
 func TestApp_RefreshToken_RevokedJTI(t *testing.T) {

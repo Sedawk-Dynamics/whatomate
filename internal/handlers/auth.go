@@ -537,8 +537,9 @@ func (a *App) GetWSToken(r *fastglue.Request) error {
 	if !ok {
 		return r.SendErrorEnvelope(fasthttp.StatusUnauthorized, "Unauthorized", nil, "")
 	}
-	orgID, ok := r.RequestCtx.UserValue("organization_id").(uuid.UUID)
-	if !ok {
+	// Use getOrgID so X-Organization-ID matches REST API (multi-org / super-admin switcher).
+	orgID, err := a.getOrgID(r)
+	if err != nil || orgID == uuid.Nil {
 		return r.SendErrorEnvelope(fasthttp.StatusUnauthorized, "Unauthorized", nil, "")
 	}
 
